@@ -1132,6 +1132,21 @@ void MacOpenGLWindow::getMouseCoordinates(int& x, int& y)
     
 }
 
+int   MacOpenGLWindow::getWidth() const
+{
+    if (m_internalData && m_internalData->m_myview && m_internalData->m_myview.GetWindowWidth)
+        return m_internalData->m_myview.GetWindowWidth;
+    return 0;
+}
+
+int   MacOpenGLWindow::getHeight() const
+{
+    if (m_internalData && m_internalData->m_myview && m_internalData->m_myview.GetWindowHeight)
+        return m_internalData->m_myview.GetWindowHeight;
+    return 0;
+}
+
+
 void MacOpenGLWindow::setResizeCallback(b3ResizeCallback resizeCallback)
 {
     [m_internalData->m_myview setResizeCallback:resizeCallback];

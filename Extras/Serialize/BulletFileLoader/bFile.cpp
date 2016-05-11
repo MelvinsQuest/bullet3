@@ -644,7 +644,7 @@ void bFile::preSwap()
 				swap(dataPtrHead, dataChunk,ignoreEndianFlag);
 			} else
 			{
-				printf("unknown chunk\n");
+				//printf("unknown chunk\n");
 			}
 		}
 
@@ -1224,7 +1224,7 @@ void bFile::resolvePointersMismatch()
 				int p = 0;
 				while (blockLen-- > 0)
 				{
-					btPointerUid dp = {0};
+					btPointerUid dp = {{0}};
 					safeSwapPtr((char*)dp.m_uniqueIds, oldPtr);
 
 					void **tptr = (void**)(newPtr + p * ptrMem);

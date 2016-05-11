@@ -49,6 +49,7 @@ static CommonParameterInterface*	s_parameterInterface=0;
 static CommonRenderInterface*	s_instancingRenderer=0;
 static OpenGLGuiHelper*	s_guiHelper=0;
 static MyProfileWindow* s_profWindow =0;
+static SharedMemoryInterface* sSharedMem = 0;
 
 #define DEMO_SELECTION_COMBOBOX 13
 const char* startFileName = "0_Bullet3Demo.txt";
@@ -71,6 +72,7 @@ extern bool useShadowMap;
 static bool visualWireframe=false;
 static bool renderVisualGeometry=true;
 static bool renderGrid = true;
+static bool renderGui = true;
 static bool enable_experimental_opencl = false;
 
 int gDebugDrawFlags = 0;
@@ -170,6 +172,7 @@ void MyKeyboardCallback(int key, int state)
 	if (key=='g' && state)
 	{
 		renderGrid = !renderGrid;
+		renderGui = !renderGui;
 	}
 
 
@@ -324,6 +327,7 @@ void selectDemo(int demoIndex)
 		int option = gAllExamples->getExampleOption(demoIndex);
 		s_guiHelper= new OpenGLGuiHelper(s_app, sUseOpenGL2);
 		CommonExampleOptions options(s_guiHelper, option);
+		options.m_sharedMem = sSharedMem;
 		sCurrentDemo = (*func)(options);
 		if (sCurrentDemo)
 		{
@@ -719,6 +723,8 @@ bool OpenGLExampleBrowser::init(int argc, char* argv[])
 		char title[1024];
 		sprintf(title,"%s using OpenGL3+. %s", appTitle,optMode);
         simpleApp = new SimpleOpenGL3App(title,width,height, gAllowRetina);
+
+        
         s_app = simpleApp;
     }
 #endif
@@ -730,7 +736,11 @@ bool OpenGLExampleBrowser::init(int argc, char* argv[])
    #endif 
    
     s_instancingRenderer = s_app->m_renderer;
-	s_window  = s_app->m_window;
+    s_window  = s_app->m_window;
+
+    width = s_window->getWidth();
+    height = s_window->getHeight();
+    
 	prevMouseMoveCallback  = s_window->getMouseMoveCallback();
 	s_window->setMouseMoveCallback(MyMouseMoveCallback);
 	
@@ -813,9 +823,7 @@ bool OpenGLExampleBrowser::init(int argc, char* argv[])
 
 	///add some demos to the gAllExamples
 
-	
-	
-
+    
 	int numDemos = gAllExamples->getNumRegisteredExamples();
 
 	//char nodeText[1024];
@@ -920,7 +928,7 @@ bool OpenGLExampleBrowser::init(int argc, char* argv[])
 	
     gui->registerFileOpenCallback(fileOpenCallback);
 	gui->registerQuitCallback(quitCallback);
-    
+   
 	return true;
 }
 
@@ -1041,7 +1049,7 @@ void OpenGLExampleBrowser::update(float deltaTime)
 		}
 
 		static int toggle = 1;
-		if (1)
+		if (renderGui)
 		{
             if (!pauseSimulation)
                 processProfileData(s_profWindow,false);
@@ -1075,4 +1083,9 @@ void OpenGLExampleBrowser::update(float deltaTime)
 	
 		gui->forceUpdateScrollBars();
 
+}
+
+void OpenGLExampleBrowser::setSharedMemoryInterface(class SharedMemoryInterface* sharedMem)
+{
+	sSharedMem = sharedMem;
 }

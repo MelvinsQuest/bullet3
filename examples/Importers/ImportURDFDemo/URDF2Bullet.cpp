@@ -24,7 +24,7 @@ static btVector4 colors[4] =
 };
 
 
-static btVector3 selectColor2()
+static btVector4 selectColor2()
 {
 
     static int curColor = 0;
@@ -195,9 +195,11 @@ void ConvertURDF2BulletInternal(const URDFImporterInterface& u2b, MultiBodyCreat
     btVector3 jointAxisInJointSpace;
     btScalar jointLowerLimit;
     btScalar jointUpperLimit;
+    btScalar jointDamping;
+    btScalar jointFriction;
 
 
-    bool hasParentJoint = u2b.getJointInfo(urdfLinkIndex, parent2joint, jointAxisInJointSpace, jointType,jointLowerLimit,jointUpperLimit);
+    bool hasParentJoint = u2b.getJointInfo(urdfLinkIndex, parent2joint, jointAxisInJointSpace, jointType,jointLowerLimit,jointUpperLimit, jointDamping, jointFriction);
 
 
     linkTransformInWorldSpace =parentTransformInWorldSpace*parent2joint;
@@ -241,11 +243,11 @@ void ConvertURDF2BulletInternal(const URDFImporterInterface& u2b, MultiBodyCreat
         {
             if (cache.m_bulletMultiBody==0)
             {
-                bool multiDof = true;
+                
                 bool canSleep = false;
                 bool isFixedBase = (mass==0);//todo: figure out when base is fixed
                 int totalNumJoints = cache.m_totalNumJoints1;
-                cache.m_bulletMultiBody = creation.allocateMultiBody(urdfLinkIndex, totalNumJoints,mass, localInertiaDiagonal, isFixedBase, canSleep, multiDof);
+                cache.m_bulletMultiBody = creation.allocateMultiBody(urdfLinkIndex, totalNumJoints,mass, localInertiaDiagonal, isFixedBase, canSleep);
 
                 cache.registerMultiBody(urdfLinkIndex, cache.m_bulletMultiBody, inertialFrameInWorldSpace, mass, localInertiaDiagonal, compoundShape, localInertialFrame);
             }
@@ -271,7 +273,7 @@ void ConvertURDF2BulletInternal(const URDFImporterInterface& u2b, MultiBodyCreat
                         //b3Printf("Fixed joint (btMultiBody)\n");
                         btQuaternion rot = offsetInA.inverse().getRotation();//parent2joint.inverse().getRotation();
                         cache.m_bulletMultiBody->setupFixed(mbLinkIndex, mass, localInertiaDiagonal, mbParentIndex,
-                                                               rot*offsetInB.getRotation(), offsetInA.getOrigin(),-offsetInB.getOrigin(),disableParentCollision);
+                                                               rot*offsetInB.getRotation(), offsetInA.getOrigin(),-offsetInB.getOrigin());
                         creation.addLinkMapping(urdfLinkIndex,mbLinkIndex);
 
 
@@ -297,6 +299,8 @@ void ConvertURDF2BulletInternal(const URDFImporterInterface& u2b, MultiBodyCreat
                                                                   offsetInA.inverse().getRotation()*offsetInB.getRotation(), quatRotate(offsetInB.inverse().getRotation(),jointAxisInJointSpace), offsetInA.getOrigin(),//parent2joint.getOrigin(),
                                                                   -offsetInB.getOrigin(),
                                                                   disableParentCollision);
+						cache.m_bulletMultiBody->getLink(mbLinkIndex).m_jointDamping = jointDamping;
+						cache.m_bulletMultiBody->getLink(mbLinkIndex).m_jointFriction= jointFriction;
                         creation.addLinkMapping(urdfLinkIndex,mbLinkIndex);
 
                     } else
@@ -349,7 +353,7 @@ void ConvertURDF2BulletInternal(const URDFImporterInterface& u2b, MultiBodyCreat
 
         if (createMultiBody)
         {
-            if (compoundShape->getNumChildShapes()>0)
+            //if (compoundShape->getNumChildShapes()>0)
             {
                 btMultiBodyLinkCollider* col= creation.allocateMultiBodyLinkCollider(urdfLinkIndex, mbLinkIndex, cache.m_bulletMultiBody);
 
@@ -371,8 +375,8 @@ void ConvertURDF2BulletInternal(const URDFImporterInterface& u2b, MultiBodyCreat
 
                 world1->addCollisionObject(col,collisionFilterGroup,collisionFilterMask);
 
-                btVector3 color = selectColor2();//(0.0,0.0,0.5);
-
+                btVector4 color = selectColor2();//(0.0,0.0,0.5);
+				u2b.getLinkColor(urdfLinkIndex,color);
                 creation.createCollisionObjectGraphicsInstance(urdfLinkIndex,col,color);
 
                 btScalar friction = 0.5f;

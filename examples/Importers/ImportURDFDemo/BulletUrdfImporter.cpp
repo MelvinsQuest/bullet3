@@ -21,7 +21,7 @@ subject to the following restrictions:
 #include "../ImportSTLDemo/LoadMeshFromSTL.h"
 #include "../ImportColladaDemo/LoadMeshFromCollada.h"
 #include "BulletCollision/CollisionShapes/btShapeHull.h"//to create a tesselation of a generic btConvexShape
-#include "../CommonInterfaces/CommonGUIHelperInterface.h"
+#include "../../CommonInterfaces/CommonGUIHelperInterface.h"
 #include "Bullet3Common/b3FileUtils.h"
 #include <string>
 #include "../../Utils/b3ResourcePath.h"
@@ -37,8 +37,10 @@ struct BulletURDFInternalData
 	UrdfParser m_urdfParser;
 	struct GUIHelperInterface* m_guiHelper;
 	char m_pathPrefix[1024];
-	
+	btHashMap<btHashInt,btVector4> m_linkColors;
+    btAlignedObjectArray<btCollisionShape*> m_allocatedCollisionShapes;
 };
+
 
 void BulletURDFImporter::printTree()
 {
@@ -96,6 +98,8 @@ struct BulletErrorLogger : public ErrorLogger
 bool BulletURDFImporter::loadURDF(const char* fileName, bool forceFixedBase)
 {
 
+	m_data->m_linkColors.clear();
+	
 
 //int argc=0;
 	char relativeFileName[1024];
@@ -129,10 +133,68 @@ bool BulletURDFImporter::loadURDF(const char* fileName, bool forceFixedBase)
     }
 
 	BulletErrorLogger loggie;
+    m_data->m_urdfParser.setParseSDF(false);
 	bool result = m_data->m_urdfParser.loadUrdf(xml_string.c_str(), &loggie, forceFixedBase);
 
 	return result;
 }
+
+int BulletURDFImporter::getNumModels() const
+{
+    return m_data->m_urdfParser.getNumModels();
+}
+
+void BulletURDFImporter::activateModel(int modelIndex)
+{
+    m_data->m_urdfParser.activateModel(modelIndex);
+}
+
+
+bool BulletURDFImporter::loadSDF(const char* fileName, bool forceFixedBase)
+{
+    
+    m_data->m_linkColors.clear();
+    
+    
+    //int argc=0;
+    char relativeFileName[1024];
+    
+    b3FileUtils fu;
+    
+    //bool fileFound = fu.findFile(fileName, relativeFileName, 1024);
+    bool fileFound = b3ResourcePath::findResourcePath(fileName,relativeFileName,1024);
+    
+    std::string xml_string;
+    m_data->m_pathPrefix[0] = 0;
+    
+    if (!fileFound){
+        std::cerr << "URDF file not found" << std::endl;
+        return false;
+    } else
+    {
+        
+        int maxPathLen = 1024;
+        fu.extractPath(relativeFileName,m_data->m_pathPrefix,maxPathLen);
+        
+        
+        std::fstream xml_file(relativeFileName, std::fstream::in);
+        while ( xml_file.good() )
+        {
+            std::string line;
+            std::getline( xml_file, line);
+            xml_string += (line + "\n");
+        }
+        xml_file.close();
+    }
+    
+    BulletErrorLogger loggie;
+    //todo: quick test to see if we can re-use the URDF parser for SDF or not
+    m_data->m_urdfParser.setParseSDF(true);
+    bool result = m_data->m_urdfParser.loadSDF(xml_string.c_str(), &loggie);
+    
+    return result;
+}
+
 
 const char* BulletURDFImporter::getPathPrefix()
 {
@@ -170,6 +232,17 @@ void BulletURDFImporter::getLinkChildIndices(int linkIndex, btAlignedObjectArray
 			childLinkIndices.push_back(childIndex);
 		}
 	}
+}
+
+bool BulletURDFImporter::getLinkColor(int linkIndex, btVector4& colorRGBA) const
+{
+	btVector4* rgbaPtr = m_data->m_linkColors[linkIndex];
+	if (rgbaPtr)
+	{
+		colorRGBA = *rgbaPtr;
+		return true;
+	}
+	return false;
 }
 
 std::string BulletURDFImporter::getLinkName(int linkIndex) const
@@ -223,11 +296,13 @@ void  BulletURDFImporter::getMassAndInertia(int linkIndex, btScalar& mass,btVect
     }
 }
     
-bool BulletURDFImporter::getJointInfo(int urdfLinkIndex, btTransform& parent2joint, btVector3& jointAxisInJointSpace, int& jointType, btScalar& jointLowerLimit, btScalar& jointUpperLimit) const
+bool BulletURDFImporter::getJointInfo(int urdfLinkIndex, btTransform& parent2joint, btVector3& jointAxisInJointSpace, int& jointType, btScalar& jointLowerLimit, btScalar& jointUpperLimit, btScalar& jointDamping, btScalar& jointFriction) const
 {
     jointLowerLimit = 0.f;
     jointUpperLimit = 0.f;
-	
+	jointDamping = 0.f;
+	jointFriction = 0.f;
+
 	UrdfLink* const* linkPtr = m_data->m_urdfParser.getModel().m_links.getAtIndex(urdfLinkIndex);
 	btAssert(linkPtr);
 	if (linkPtr)
@@ -243,6 +318,9 @@ bool BulletURDFImporter::getJointInfo(int urdfLinkIndex, btTransform& parent2joi
 			jointAxisInJointSpace = pj->m_localJointAxis;
 			jointLowerLimit = pj->m_lowerLimit;
 			jointUpperLimit = pj->m_upperLimit;
+			jointDamping = pj->m_jointDamping;
+			jointFriction = pj->m_jointFriction;
+
 			return true;
 		} else
 		{
@@ -269,7 +347,6 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 	{
 		case URDF_GEOM_CYLINDER:
 		{
-			printf("processing a cylinder\n");
 			btAlignedObjectArray<btVector3> vertices;
 		
 			//int numVerts = sizeof(barrel_vertices)/(9*sizeof(float));
@@ -293,7 +370,6 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 		}
 		case URDF_GEOM_BOX:
 		{
-			printf("processing a box\n");
 			
 			btVector3 extents = visual->m_geometry.m_boxSize;
 			
@@ -305,7 +381,6 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 		}
 		case URDF_GEOM_SPHERE:
 		{
-			printf("processing a sphere\n");
 			btScalar radius = visual->m_geometry.m_sphereRadius;
 			btSphereShape* sphereShape = new btSphereShape(radius);
 			convexColShape = sphereShape;
@@ -318,14 +393,14 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 		{
 			if (visual->m_name.length())
 			{
-				printf("visual->name=%s\n", visual->m_name.c_str());
+				//b3Printf("visual->name=%s\n", visual->m_name.c_str());
 			}
 			if (1)//visual->m_geometry)
 			{
 				if (visual->m_geometry.m_meshFileName.length())
 				{
 					const char* filename = visual->m_geometry.m_meshFileName.c_str();
-					printf("mesh->filename=%s\n", filename);
+					//b3Printf("mesh->filename=%s\n", filename);
 					char fullPath[1024];
 					int fileType = 0;
                     
@@ -458,24 +533,32 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 						}
 						default:
 						{
-                            printf("Error: unsupported file type for Visual mesh: %s\n", fullPath);
+                            b3Warning("Error: unsupported file type for Visual mesh: %s\n", fullPath);
                             btAssert(0);
 						}
 						}
 
 
-						if (glmesh && (glmesh->m_numvertices>0))
+						if (glmesh && glmesh->m_vertices && (glmesh->m_numvertices>0))
 						{
+						    //apply the geometry scaling
+						    for (int i=0;i<glmesh->m_vertices->size();i++)
+                            {
+                                glmesh->m_vertices->at(i).xyzw[0] *= visual->m_geometry.m_meshScale[0];
+                                glmesh->m_vertices->at(i).xyzw[1] *= visual->m_geometry.m_meshScale[1];
+                                glmesh->m_vertices->at(i).xyzw[2] *= visual->m_geometry.m_meshScale[2];
+                            }
+						    
 						}
 						else
 						{
-							printf("issue extracting mesh from COLLADA/STL file %s\n", fullPath);
+							b3Warning("issue extracting mesh from COLLADA/STL file %s\n", fullPath);
 						}
 
 					}
 					else
 					{
-						printf("mesh geometry not found %s\n", fullPath);
+						b3Warning("mesh geometry not found %s\n", fullPath);
 					}
 
 
@@ -487,12 +570,12 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 		}
 		default:
 		{
-			printf("Error: unknown visual geometry type\n");
+			b3Warning("Error: unknown visual geometry type\n");
 		}
 	}
 
 	//if we have a convex, tesselate into localVertices/localIndices
-	if (convexColShape)
+	if ((glmesh==0) && convexColShape)
 	{
 		btShapeHull* hull = new btShapeHull(convexColShape);
 		hull->buildHull(0.0);
@@ -534,6 +617,7 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 			glmesh->m_numvertices = glmesh->m_vertices->size();
 			glmesh->m_numIndices = glmesh->m_indices->size();
 		}
+        delete hull;
 		delete convexColShape;
 		convexColShape = 0;
 
@@ -567,6 +651,8 @@ void convertURDFToVisualShape(const UrdfVisual* visual, const char* urdfPathPref
 			verticesOut.push_back(v);
 		}
 	}
+    delete glmesh;
+    
 }
 
 
@@ -580,7 +666,6 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
     {
         case URDF_GEOM_CYLINDER:
         {
-            printf("processing a cylinder\n");
 			btScalar cylRadius = collision->m_geometry.m_cylinderRadius;
 			btScalar cylLength = collision->m_geometry.m_cylinderLength;
 			
@@ -610,7 +695,6 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
         }
         case URDF_GEOM_BOX:
         {
-            printf("processing a box\n");
 			btVector3 extents = collision->m_geometry.m_boxSize;
 			btBoxShape* boxShape = new btBoxShape(extents*0.5f);
 			//btConvexShape* boxShape = new btConeShapeX(extents[2]*0.5,extents[0]*0.5);
@@ -620,7 +704,6 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
         }
         case URDF_GEOM_SPHERE:
         {
-			printf("processing a sphere\n");
             
 			btScalar radius = collision->m_geometry.m_sphereRadius;
 			btSphereShape* sphereShape = new btSphereShape(radius);
@@ -634,14 +717,14 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
         {
 			if (collision->m_name.length())
 			{
-				printf("collision->name=%s\n",collision->m_name.c_str());
+				//b3Printf("collision->name=%s\n",collision->m_name.c_str());
 			}
 			if (1)
 			{
 				if (collision->m_geometry.m_meshFileName.length())
 				{
 					const char* filename = collision->m_geometry.m_meshFileName.c_str();
-					printf("mesh->filename=%s\n",filename);
+					//b3Printf("mesh->filename=%s\n",filename);
 					char fullPath[1024];
 					int fileType = 0;
 					sprintf(fullPath,"%s%s",urdfPathPrefix,filename);
@@ -742,7 +825,8 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
 			
 									//compensate upAxisTrans and unitMeterScaling here
 									btMatrix4x4 upAxisMat;
-									upAxisMat.setPureRotation(upAxisTrans.getRotation());
+                                    upAxisMat.setIdentity();
+									//upAxisMat.setPureRotation(upAxisTrans.getRotation());
 									btMatrix4x4 unitMeterScalingMat;
 									unitMeterScalingMat.setPureScaling(btVector3(unitMeterScaling,unitMeterScaling,unitMeterScaling));
 									btMatrix4x4 worldMat = unitMeterScalingMat*instance->m_worldTransform*upAxisMat;
@@ -769,7 +853,7 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
 							}
 						default:
 							{
-                                printf("Unsupported file type in Collision: %s\n",fullPath);
+                                b3Warning("Unsupported file type in Collision: %s\n",fullPath);
                                 btAssert(0);
 							}
 						}
@@ -777,14 +861,17 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
 
 						if (glmesh && (glmesh->m_numvertices>0))
 						{
-							printf("extracted %d verticed from STL file %s\n", glmesh->m_numvertices,fullPath);
+							//b3Printf("extracted %d verticed from STL file %s\n", glmesh->m_numvertices,fullPath);
 							//int shapeId = m_glApp->m_instancingRenderer->registerShape(&gvertices[0].pos[0],gvertices.size(),&indices[0],indices.size());
 							//convex->setUserIndex(shapeId);
 							btAlignedObjectArray<btVector3> convertedVerts;
 							convertedVerts.reserve(glmesh->m_numvertices);
 							for (int i=0;i<glmesh->m_numvertices;i++)
 							{
-								convertedVerts.push_back(btVector3(glmesh->m_vertices->at(i).xyzw[0],glmesh->m_vertices->at(i).xyzw[1],glmesh->m_vertices->at(i).xyzw[2]));
+								convertedVerts.push_back(btVector3(
+                                           glmesh->m_vertices->at(i).xyzw[0]*collision->m_geometry.m_meshScale[0],
+                                           glmesh->m_vertices->at(i).xyzw[1]*collision->m_geometry.m_meshScale[1],
+                                           glmesh->m_vertices->at(i).xyzw[2]*collision->m_geometry.m_meshScale[2]));
 							}
 							//btConvexHullShape* cylZShape = new btConvexHullShape(&glmesh->m_vertices->at(0).xyzw[0], glmesh->m_numvertices, sizeof(GLInstanceVertex));
 							btConvexHullShape* cylZShape = new btConvexHullShape(&convertedVerts[0].getX(), convertedVerts.size(), sizeof(btVector3));
@@ -795,14 +882,15 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
 							shape = cylZShape;
 						} else
 						{
-							printf("issue extracting mesh from STL file %s\n", fullPath);
+							b3Warning("issue extracting mesh from STL file %s\n", fullPath);
 						}
 
+                        delete glmesh;
+                       
 					} else
 					{
-						printf("mesh geometry not found %s\n",fullPath);
+						b3Warning("mesh geometry not found %s\n",fullPath);
 					}
-							
 							
 				}
 			}
@@ -812,7 +900,7 @@ btCollisionShape* convertURDFToCollisionShape(const UrdfCollision* collision, co
         }
         default:
         {
-            printf("Error: unknown visual geometry type\n");
+            b3Warning("Error: unknown visual geometry type\n");
         }
     }
 	return shape;
@@ -851,9 +939,17 @@ int BulletURDFImporter::convertLinkVisualShapes(int linkIndex, const char* pathP
 		for (int v = 0; v < link->m_visualArray.size();v++)
 		{
 			const UrdfVisual& vis = link->m_visualArray[v];
-			btTransform childTrans = vis.m_linkLocalFrame;
-		
+            btTransform childTrans = vis.m_linkLocalFrame;
+			btHashString matName(vis.m_materialName.c_str());
+			UrdfMaterial *const * matPtr = model.m_materials[matName];
+			if (matPtr)
+			{
+				UrdfMaterial *const  mat = *matPtr;
+				//printf("UrdfMaterial %s, rgba = %f,%f,%f,%f\n",mat->m_name.c_str(),mat->m_rgbaColor[0],mat->m_rgbaColor[1],mat->m_rgbaColor[2],mat->m_rgbaColor[3]);
+				m_data->m_linkColors.insert(linkIndex,mat->m_rgbaColor);
+			}
 			convertURDFToVisualShape(&vis, pathPrefix, inertialFrame.inverse()*childTrans, vertices, indices);
+			
 			
 		}
 	}
@@ -867,10 +963,23 @@ int BulletURDFImporter::convertLinkVisualShapes(int linkIndex, const char* pathP
         
 }
 
+int BulletURDFImporter::getNumAllocatedCollisionShapes() const
+{
+    return m_data->m_allocatedCollisionShapes.size();
+}
+
+
+btCollisionShape* BulletURDFImporter::getAllocatedCollisionShape(int index)
+{
+    return m_data->m_allocatedCollisionShapes[index];
+}
+
  class btCompoundShape* BulletURDFImporter::convertLinkCollisionShapes(int linkIndex, const char* pathPrefix, const btTransform& localInertiaFrame) const
 {
         
     btCompoundShape* compoundShape = new btCompoundShape();
+    m_data->m_allocatedCollisionShapes.push_back(compoundShape);
+    
     compoundShape->setMargin(0.001);
 #if USE_ROS_URDF_PARSER
     for (int v=0;v<(int)m_data->m_links[linkIndex]->collision_array.size();v++)
@@ -909,8 +1018,7 @@ int BulletURDFImporter::convertLinkVisualShapes(int linkIndex, const char* pathP
 				btTransform childTrans = col.m_linkLocalFrame;
 				
 				compoundShape->addChildShape(localInertiaFrame.inverse()*childTrans,childShape);
-				
-			}
+           		}
 		}
 	}
 
